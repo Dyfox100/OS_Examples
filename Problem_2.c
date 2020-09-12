@@ -30,7 +30,6 @@ void some_function_to_call_and_expand_stack() {
 }
 
 int main(int argc, char **argv) {
-    printf("%p", &e)
     printf("\n----------TEXT SEGMENT--------------------\n");
     printf("The address of the main functin in the text segment is: %p\n", main);
     printf("The address of the auxiliary function (that's declared above main) in the text segment is: %p\n",third_function_to_call_and_expand_stack);
@@ -72,6 +71,11 @@ int main(int argc, char **argv) {
                     0, 
                     0 );
     printf("The address of a small mmaped segment that I tried to map over the top of our earlier small allocation is: %p\n", mmap_addr1);
+    // clean up
+    munmap(mmap_addr, 1000);
+    munmap(mmap_addr1, 1000);
+    free(test);
+    free(bigTest);
 
     printf("\n----------LINKED LIBRARIES-----------------\n");
     printf("The address of the sem_open functin linked from pthread is: %p\n", sem_open);
