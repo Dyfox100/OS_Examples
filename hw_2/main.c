@@ -5,48 +5,77 @@
 #include <unistd.h>
 
 #include "file_utils.h"
+
 void mode2(int readRate, int printRate) {
   int length = 0;
-  int smpls = printRate / readRate;
-  int cpuUsr[smpls]; int cpuSys[smpls]; int cpuIdl[smpls];
-  int memTotal; int tmpMem; int memFree[smpls];
-  int cpuUserStart = 0; int cpuSystemStart = 0; int cpuIdleStart = 0;
-  int tmpUsr, tmpSys, tmpIdl;
+  long int smpls = printRate / readRate;
+  long int cpuUsr[smpls + 1], cpuSys[smpls + 1], cpuIdl[smpls + 1];
+  long int memTotal, tmpMem, memFree[smpls + 1];
+  long int tmpDskR, tmpDskW, diskRW[smpls + 1];
+  long int tmpCtxs, ctxSwitches[smpls + 1];
+  long int tmpUsr, tmpSys, tmpIdl;
+  long int dskRStart, dskWStart;
+  long int tmpFrk, frks[smpls + 1];
   char** arrayStrings = parseProcFileForLine("meminfo", "MemTotal", &length);
-  sscanf(*arrayStrings, "%*s  %d kb", &memTotal);
+  sscanf(*arrayStrings, "%*s  %ld kb", &memTotal);
   free(arrayStrings);
+  ctxSwitches[0] = 0; cpuUsr[0] = 0; cpuSys[0] = 0; cpuIdl[0] = 0; diskRW[0] = 0;
   while (1) {
-     arrayStrings = parseProcFileForLine("stat", "cpu ", &length);
-    sscanf(*arrayStrings, "cpu  %d %*d %d %d", &cpuUserStart, &cpuSystemStart, &cpuIdleStart);
+    arrayStrings = parseProcFileForLine("stat", "processes", &length);
+    sscanf(*arrayStrings, "processes  %ld", frks);
     free(arrayStrings);
-    //printf("%d, %d, %d", cpuUserStart, cpuSystemStart, cpuIdleStart);
-    length = 0;
-    for (int i = 0; i < printRate/readRate; i++) {
+    arrayStrings = parseProcFileForLine("stat", "ctxt", &length);
+    sscanf(*arrayStrings, "ctxt  %ld", ctxSwitches);
+    free(arrayStrings);
+    arrayStrings = parseProcFileForLine("stat", "cpu ", &length);
+    sscanf(*arrayStrings, "cpu  %ld %*d %ld %ld", cpuUsr, cpuSys, cpuIdl);
+    free(arrayStrings);
+    arrayStrings = parseProcFileForLine("diskstats", "sda1", &length);
+    sscanf(*arrayStrings, "%*d %*d %*s %*d %*d %ld %*d %*d %*d %ld ", &dskRStart, &dskWStart);
+    free(arrayStrings);
+    diskRW[0] = dskRStart + dskWStart;
+    //printf("%lu disk start\n", diskRW[0]);
+    for (int i = 1; i <= smpls; i++) {
       sleep(readRate);
+      arrayStrings = parseProcFileForLine("stat", "processes", &length);
+      sscanf(*arrayStrings, "processes  %ld", &tmpFrk);
+      free(arrayStrings);
+      arrayStrings = parseProcFileForLine("stat", "ctxt", &length);
+      sscanf(*arrayStrings, "ctxt  %ld", &tmpCtxs);
+      free(arrayStrings);
+      arrayStrings = parseProcFileForLine("diskstats", "sda1", &length);
+      sscanf(*arrayStrings, "%*d %*d %*s %*d %*d %ld %*d %*d %*d %ld ", &tmpDskR, &tmpDskW);
+      //sprintf("%lu, %lu disk read write %lu\n", tmpDskR, tmpDskW, (tmpDskR + tmpDskW - diskRW[i - 1]));
       arrayStrings = parseProcFileForLine("stat", "cpu ", &length);
-      sscanf(*arrayStrings, "cpu  %d %*d %d %d", &tmpUsr, &tmpSys, &tmpIdl);
+      sscanf(*arrayStrings, "cpu  %ld %*d %ld %ld", &tmpUsr, &tmpSys, &tmpIdl);
       free(arrayStrings);
       arrayStrings = parseProcFileForLine("meminfo", "MemFree", &length);
-      sscanf(*arrayStrings, "%*s  %d kb", &tmpMem);
+      sscanf(*arrayStrings, "%*s  %ld kb", &tmpMem);
       free(arrayStrings);
+      frks[i] = (tmpFrk - (frks[i-1] * (i != 1)) - frks[0]);
+      ctxSwitches[i] = (tmpCtxs - (ctxSwitches[i -1] * (i != 1)) - ctxSwitches[0]);
+      diskRW[i] = (tmpDskR + tmpDskW - (diskRW[i-1] * (i != 1)) - diskRW[0]);
       memFree[i] = (100 * tmpMem) / memTotal;
-      cpuUsr[i] = 100 * (tmpUsr - cpuUserStart);
-      cpuUsr[i] /= (tmpUsr - cpuUserStart + tmpSys - cpuSystemStart + tmpIdl - cpuIdleStart);
-      cpuSys[i] = 100 * (tmpSys - cpuSystemStart);
-      cpuSys[i] /= (tmpUsr - cpuUserStart + tmpSys - cpuSystemStart + tmpIdl - cpuIdleStart);
-      cpuIdl[i] = 100 * (tmpIdl - cpuIdleStart);
-      cpuIdl[i] /= (tmpUsr - cpuUserStart + tmpSys - cpuSystemStart + tmpIdl - cpuIdleStart);
+      cpuUsr[i] = tmpUsr - (cpuUsr[i-1] * (i != 1)) - cpuUsr[0];
+      cpuSys[i] = tmpSys - (cpuSys[i-1] * (i != 1)) - cpuSys[0];
+      cpuIdl[i] = tmpIdl - (cpuIdl[i-1] * (i != 1)) - cpuIdl[0];
     }
-    int sumUsr = 0; int sumIdl = 0; int sumSys = 0; int sumMem = 0;
-    for (int i = 0; i < printRate/readRate; i++) {
+    long int sumUsr = 0, sumIdl = 0, sumSys = 0, sumMem = 0, sumDskRW = 0, sumCtx = 0, sumFrks = 0;
+    for (int i = 1; i <= smpls; i++) {
+      sumFrks += frks[i] / readRate;
+      sumCtx += ctxSwitches[i] / readRate;
+      sumDskRW += diskRW[i] / readRate;
       sumMem += memFree[i];
-      sumUsr += cpuUsr[i];
-      sumIdl += cpuIdl[i];
-      sumSys += cpuSys[i];
+      sumUsr += (100 * cpuUsr[i]) / (cpuUsr[i] + cpuSys[i] + cpuIdl[i]);
+      sumIdl += (100 * cpuIdl[i]) / (cpuUsr[i] + cpuSys[i] + cpuIdl[i]);
+      sumSys += (100 * cpuSys[i]) / (cpuUsr[i] + cpuSys[i] + cpuIdl[i]);
     }
-    printf("CPU STATS:\nUser Percentage: %d, System Percentage: %d, Idle Percentage: %d\n",
+    printf("CPU STATS:\nUser Percentage: %ld, System Percentage: %ld, Idle Percentage: %ld\n",
       sumUsr/(smpls), sumSys/(smpls), sumIdl/(smpls));
-    printf("Average Percentage of Memory Free: %d\n", sumMem / smpls);
+    printf("Average Percentage of Memory Free: %ld\n", sumMem / smpls);
+    printf("Average Disk Sectors Read And Written Per Second: %ld\n", sumDskRW / smpls);
+    printf("Average Context Switches Per Second: %ld\n", sumCtx / smpls);
+    printf("Average Processes Created Per Second: %ld\n", sumFrks / smpls);
     fflush( stdout );
   }
 
